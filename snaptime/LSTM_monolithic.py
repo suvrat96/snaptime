@@ -3,10 +3,12 @@ from datetime import datetime
 from sklearn.metrics import roc_curve
 from sklearn.metrics import auc
 from sklearn.metrics import roc_auc_score
-import cPickle as pickle
+import pickle
+import math
 import time
 import os
 from snaptime_helper import FillData
+import pandas as pd
 
 def _test_LSTM(input_directory,model,test_indices,sum,sumsq,obj,interval,X_cols,timeslice,granularity,train_indices=None):
     files = os.listdir(input_directory)
@@ -18,40 +20,35 @@ def _test_LSTM(input_directory,model,test_indices,sum,sumsq,obj,interval,X_cols,
     epoch = datetime.utcfromtimestamp(0)
     
     for i in xrange(len(files)):
+        print "Testing file", i
         file = files[i]
         init_epoch = long((datetime.strptime('_'.join(file.split('_')[:2]),'%Y%m%d_%H') - epoch).total_seconds()*1000)
-        if file not in test_indices:
-            continue
-        data = obj.createAndFillData(os.path.join(input_directory,file),init_epoch,timeslice,granularity)[:,X_cols]
-        for j in xrange(data.shape[1]):
-            if sumsq[j] != 0:
-                data[:,j] = (data[:,j]-sum[j])/sumsq[j]
-        positives = test_indices[file]['positive']
-        negatives = test_indices[file]['negative']
-        if len(positives) > 0 and len(negatives) > 0:
-            X_test = np.concatenate(([data[idx:idx+interval,:] for idx in positives],[data[idx:idx+interval,:] for idx in negatives]))
-        elif len(positives) > 0:
-            X_test = np.array([data[idx:idx+interval,:] for idx in positives])
-        else:
-            X_test = np.array([data[idx:idx+interval,:] for idx in negatives])
-        for idx in positives:
-            y_true_test.append([0,1])
-        for idx in negatives:
-            y_true_test.append([1,0])
-        y_pred_test += model.predict(X_test).tolist()
-
-    if train_indices != None:
-        for i in xrange(len(files)):
-            file = files[i]
-            init_epoch = long((datetime.strptime('_'.join(file.split('_')[:2]),'%Y%m%d_%H') - epoch).total_seconds()*1000)
-            if file not in train_indices:
-                continue
-            data = obj.createAndFillData(os.path.join(input_directory,file),init_epoch,timeslice,granularity)[:,X_cols]
+        # print time.time() - time1
+        data = None
+        time1 = time.time()
+        if file in test_indices or file in train_indices:
+            data = obj.createAndFillData(os.path.join(input_directory,file),init_epoch,timeslice,granularity)
+            data = data[:, X_cols]
             for j in xrange(data.shape[1]):
                 if sumsq[j] != 0:
                     data[:,j] = (data[:,j]-sum[j])/sumsq[j]
-            positives = train_indices[file]['positive']
-            negatives = train_indices[file]['negative']
+
+
+        else:
+            continue
+
+        time2 = time.time()
+        print 'PHASE 1 took: ', time2-time1
+
+        if file in test_indices:
+            # data = pd.read_csv(os.path.join(input_directory,file),sep='\t',header=None,low_memory=False)[X_cols].as_matrix()
+            time175 = time.time()
+            # print time.time() - time15
+            # print time.time() - time175
+            positives = test_indices[file]['positive']
+            negatives = test_indices[file]['negative']
+            time2 = time.time()
+            # print "Phase 1 took", time2-time1
             if len(positives) > 0 and len(negatives) > 0:
                 X_test = np.concatenate(([data[idx:idx+interval,:] for idx in positives],[data[idx:idx+interval,:] for idx in negatives]))
             elif len(positives) > 0:
@@ -59,10 +56,41 @@ def _test_LSTM(input_directory,model,test_indices,sum,sumsq,obj,interval,X_cols,
             else:
                 X_test = np.array([data[idx:idx+interval,:] for idx in negatives])
             for idx in positives:
-                y_true_train.append([0,1])
+                y_true_test.append([0,1])
             for idx in negatives:
-                y_true_train.append([1,0])
-            y_pred_train += model.predict(X_test).tolist()
+                y_true_test.append([1,0])
+            time3 = time.time()
+            print "Phase 2 took", time3 - time2
+            y_pred_test += model.predict(X_test).tolist()
+            print "Phase 3 took", time.time() - time3
+
+        time4 = time.time()
+
+
+        if train_indices != None:
+            if file in train_indices:
+                # data = obj.createAndFillData(os.path.join(input_directory,file),init_epoch,timeslice,granularity)[:,X_cols]
+                # data = pd.read_csv(os.path.join(input_directory,file),sep='\t',header=None,low_memory=False)[X_cols].as_matrix()
+                # for j in xrange(data.shape[1]):
+                #     if sumsq[j] != 0:
+                #         data[:,j] = (data[:,j]-sum[j])/sumsq[j]
+                positives = train_indices[file]['positive']
+                negatives = train_indices[file]['negative']
+                if len(positives) > 0 and len(negatives) > 0:
+                    X_test = np.concatenate(([data[idx:idx+interval,:] for idx in positives],[data[idx:idx+interval,:] for idx in negatives]))
+                elif len(positives) > 0:
+                    X_test = np.array([data[idx:idx+interval,:] for idx in positives])
+                else:
+                    X_test = np.array([data[idx:idx+interval,:] for idx in negatives])
+                for idx in positives:
+                    y_true_train.append([0,1])
+                for idx in negatives:
+                    y_true_train.append([1,0])
+                y_pred_train += model.predict(X_test).tolist()
+
+                print "Phase 4 took:", time.time() - time4
+                print "Total Runtime was", time.time()- time1
+
 
     fpr,tpr,thres = roc_curve([y_true_test[i][1] for i in xrange(len(y_true_test))],[y_pred_test[i][1] for i in xrange(len(y_pred_test))])
     test_score =  roc_auc_score([y_true_test[i][1] for i in xrange(len(y_true_test))],[y_pred_test[i][1] for i in xrange(len(y_pred_test))])
@@ -73,30 +101,40 @@ def _test_LSTM(input_directory,model,test_indices,sum,sumsq,obj,interval,X_cols,
         fpr_t,tpr_t,thres_t,train_score=None,None,None,None,None
     return fpr,tpr,thres,test_score,fpr_t,tpr_t,thres_t,train_score
 
-def _train_LSTM(input_directory,train_indices,buffering,sum,sumsq,LSTM_model,iterations,obj,interval,X_cols,timeslice,granularity):
+def _train_LSTM(input_directory,train_indices,buffering,sum,sumsq,LSTM_model,iterations,obj,interval,X_cols,timeslice,granularity, batches):
     global_X = []
     global_Y = []
-    global_idx = -1
+    global_idx = 36000000
     global_file_idx = -1
     files = [file for file in os.listdir(input_directory)]
     epoch = datetime.utcfromtimestamp(0)
     def train_generator():
+        # print 'in generator'
         global_file_idx = -1
-        global_idx = -1
+        global_idx = 36000000
         global_X = []
         global_Y = []
         while True:
+            # print 'in loops'
             #refresh with another file's data
-            if global_file_idx == -1 or global_idx>= len(global_X):
+
+            if global_idx >= len(global_X):
                 global_idx = 0
+                global_file_idx += 1 
+                global_file_idx = global_file_idx % len(files)
+
+                while files[global_file_idx] not in train_indices:
+            		global_file_idx += 1 
+            		global_file_idx = global_file_idx % len(files)
+            		
                 global_X = []
                 global_Y = []
-                while files[global_file_idx] not in train_indices:
-                    global_file_idx = (global_file_idx + 1)%len(files)
                 init_epoch = long((datetime.strptime('_'.join(files[global_file_idx].split('_')[:2]),'%Y%m%d_%H') - epoch).total_seconds()*1000)
                 positives = train_indices[files[global_file_idx]]['positive']
                 negatives = train_indices[files[global_file_idx]]['negative']
-                data = obj.createAndFillData(os.path.join(input_directory,files[global_file_idx]),init_epoch,timeslice,granularity)[:,X_cols]
+                data = obj.createAndFillData(os.path.join(input_directory,files[global_file_idx]),init_epoch,timeslice,granularity)
+                data = data[:, X_cols]
+                # data = pd.read_csv(os.path.join(input_directory,file),sep='\t',header=None,low_memory=False)[X_cols].as_matrix()
                 if len(positives) > 0 and len(negatives) > 0:
                     global_Y = np.concatenate(([[0,1] for idx in positives],[[1,0] for idx in negatives]))
                     global_X = np.concatenate(([data[idx:idx+interval,:] for idx in positives],[data[idx:idx+interval,:] for idx in negatives]))
@@ -117,10 +155,12 @@ def _train_LSTM(input_directory,train_indices,buffering,sum,sumsq,LSTM_model,ite
             global_idx = global_idx + buffering
             yield val
 
-    LSTM_model.fit_generator(train_generator(),buffering,iterations)
+    print 'Fitting Generator'
+    history = LSTM_model.fit_generator(train_generator(),batches,iterations)
+    pickle.dump(history.history, open('history.pkl', 'wb'))
     return LSTM_model
 
-def run_LSTM(input_directory,X_cols,Y_cols,interval,lookahead,timeslice,granularity,y_differentiator,buffering,LSTM_model,iterations,imbalance=10,lastval=True):
+def run_LSTM(input_directory,X_cols,Y_cols,interval,lookahead,timeslice,granularity,y_differentiator,buffering,LSTM_model,iterations,imbalance=10,lastval=True, testAll = True):
     """input directory - directory containing files in snaptime format
     X_cols - columns with independent data
     Y_cols - columns with dependent data
@@ -154,9 +194,18 @@ def run_LSTM(input_directory,X_cols,Y_cols,interval,lookahead,timeslice,granular
     epoch = datetime.utcfromtimestamp(0)
     obj = FillData()
     total = 0
+    xxx = 0
+    batches = 0
     for file in files:
+        print xxx, ' out of ', len(files)
+        xxx += 1
         init_epoch = long((datetime.strptime('_'.join(file.split('_')[:2]),'%Y%m%d_%H') - epoch).total_seconds()*1000)
+        # data = pd.read_csv(os.path.join(input_directory,file),sep='\t',header=None,low_memory=False)[X_cols].as_matrix()
         data = obj.createAndFillData(os.path.join(input_directory,file),init_epoch,timeslice,granularity)
+        # for i, element in enumerate(data[0]):
+        #     print (i + 1), element
+        # print type(data)
+        # print data.shape
         full_data_Y = data[:,Y_cols]
         full_data_X = data[:,X_cols]
         total += len(full_data_X)
@@ -164,7 +213,7 @@ def run_LSTM(input_directory,X_cols,Y_cols,interval,lookahead,timeslice,granular
         for j in xrange(full_data_X.shape[1]):
             sum[j] += np.sum(full_data_X[:,j])
         for j in xrange(full_data_X.shape[1]):
-            sumsq[j] += np.sum(full_data_X[:,j]-sum[j])**2
+            sumsq[j] += np.sum(full_data_X[:,j]*full_data_X[:,j])
         i = 0
         counter = 0
         pos_idx = []
@@ -198,13 +247,27 @@ def run_LSTM(input_directory,X_cols,Y_cols,interval,lookahead,timeslice,granular
         temp_neg_idx = neg_idx[:imbalance*len(pos_idx)]
         start = imbalance*len(pos_idx)
         np.random.shuffle(pos_idx)
+        # print 'Checking here'
+        # print type(temp_neg_idx)
+        # print temp_neg_idx.shape
+        # print pos_idx.shape
+        # print temp_neg_idx
         data_train[file] ={'positive':pos_idx[:int(0.9*len(pos_idx))],'negative':temp_neg_idx[:int(0.9*len(temp_neg_idx))]}
-        data_test[file] ={'positive':pos_idx[int(0.9*len(pos_idx)):],'negative':np.concatenate((temp_neg_idx[int(0.9*len(temp_neg_idx)):],neg_idx[start:]))}
+        batches += math.ceil((len(data_train[file]['positive']) + len(data_train[file]['negative'])) / float(buffering))
+        if not testAll:
+            data_test[file] ={'positive':pos_idx[int(0.9*len(pos_idx)):],'negative':temp_neg_idx[int(0.9*len(temp_neg_idx)):]}
+        else:
+            data_test[file] ={'positive':pos_idx[int(0.9*len(pos_idx)):],'negative':np.concatenate((temp_neg_idx[int(0.9*len(temp_neg_idx)):],neg_idx[start:]))}
     sum,sumsq = np.array(sum),np.array(sumsq)
     sum /= total
     sumsq = (sumsq/total - sum**2)**0.5
+    pickle.dump((sum, sumsq), open('sums.pkl', 'wb'))
+    pickle.dump((data_train, data_test), open('data.pkl', 'wb'))
+    pickle.dump(batches, open('batches.pkl', 'wb'))
     #train and test
-    model = _train_LSTM(input_directory,data_train,buffering,sum,sumsq,LSTM_model,iterations,obj,interval,X_cols,timeslice,granularity)
+    print 'Reaching training'
+    model = _train_LSTM(input_directory,data_train,buffering,sum,sumsq,LSTM_model,iterations,obj,interval,X_cols,timeslice,granularity, batches)
+    model.save_weights('model.h5')
     fpr,tpr,thres,test_score,fpr_t,tpr_t,thres_t,train_score = _test_LSTM(input_directory,model,data_test,sum,sumsq,obj,interval,X_cols,timeslice,granularity,data_train)
     return fpr,tpr,thres,test_score,fpr_t,tpr_t,thres_t,train_score
 
